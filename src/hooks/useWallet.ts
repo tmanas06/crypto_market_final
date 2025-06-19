@@ -11,16 +11,40 @@ export const { chains, publicClient, webSocketPublicClient } = configureChains(
   [publicProvider()]
 );
 
+// Get WalletConnect project ID from environment variables
+const walletConnectProjectId = import.meta.env.VITE_WALLETCONNECT_PROJECT_ID;
+
+if (!walletConnectProjectId) {
+  console.warn('WalletConnect project ID is not set. WalletConnect will not work properly.');
+}
+
 // Create a custom config with the required connectors
 export const config = createConfig({
   autoConnect: true,
   connectors: [
-    new InjectedConnector({ chains }),
+    new InjectedConnector({ 
+      chains,
+      options: {
+        name: 'Browser Wallet',
+        shimDisconnect: true,
+      },
+    }),
     new WalletConnectConnector({
       chains,
       options: {
-        projectId: 'YOUR_WALLETCONNECT_PROJECT_ID', // Get this from WalletConnect Cloud
+        projectId: walletConnectProjectId || 'fallback-project-id',
         showQrModal: true,
+        metadata: {
+          name: 'Crypto Markets',
+          description: 'Crypto market analysis and trading platform',
+          url: window.location.origin,
+          icons: ['https://your-app-url.com/logo.png']
+        },
+        qrModalOptions: {
+          themeVariables: {
+            '--wcm-z-index': '9999'
+          }
+        }
       },
     }),
   ],

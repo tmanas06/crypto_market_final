@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ArrowUpIcon, ArrowDownIcon, TrendingUpIcon, MinusIcon } from 'lucide-react';
+import { ArrowUpIcon, ArrowDownIcon, TrendingUpIcon, MinusIcon, XCircle, RefreshCw } from 'lucide-react';
 
 interface CryptoData {
   id: string;
@@ -35,24 +35,83 @@ interface PriceHistory {
   price: number;
 }
 
+import { fetchWithRateLimit } from '@/utils/api';
+
+const COINGECKO_API_BASE = 'https://api.coingecko.com/api/v3';
+
+// Cache for price history to avoid refetching
+const priceHistoryCache: Record<string, PriceHistory[]> = {};
+
 const fetchTopCryptos = async (): Promise<CryptoData[]> => {
-  const response = await fetch(
-    'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=10&page=1&sparkline=false'
-  );
-  if (!response.ok) throw new Error('Failed to fetch crypto data');
-  return response.json();
+  const url = `${COINGECKO_API_BASE}/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=5&page=1&sparkline=false&price_change_percentage=24h`;
+  
+  try {
+    const data = await fetchWithRateLimit<CryptoData[]>(
+      url, 
+      'topCryptos',
+      2, // retries
+      2000 // initial delay
+    );
+    
+    if (!Array.isArray(data)) {
+      throw new Error('Invalid response format from CoinGecko API');
+    }
+    
+    return data;
+  } catch (error) {
+    console.error('Error fetching top cryptos:', error);
+    throw new Error(
+      error instanceof Error 
+        ? error.message 
+        : 'Failed to fetch cryptocurrency data. Please try again later.'
+    );
+  }
 };
 
 const fetchPriceHistory = async (coinId: string): Promise<PriceHistory[]> => {
-  const response = await fetch(
-    `https://api.coingecko.com/api/v3/coins/${coinId}/market_chart?vs_currency=usd&days=30&interval=daily`
-  );
-  if (!response.ok) throw new Error(`Failed to fetch price history for ${coinId}`);
-  const data = await response.json();
-  return data.prices.map(([timestamp, price]: [number, number]) => ({
-    timestamp,
-    price
-  }));
+  // Check cache first
+  if (priceHistoryCache[coinId]) {
+    return priceHistoryCache[coinId];
+  }
+
+  const url = `${COINGECKO_API_BASE}/coins/${coinId}/market_chart?vs_currency=usd&days=30&interval=daily`;
+  
+  try {
+    const response = await fetchWithRateLimit<{ prices: [number, number][] }>(
+      url,
+      `priceHistory_${coinId}`,
+      2, // retries
+      1500 // initial delay
+    );
+    
+    if (!response?.prices) {
+      throw new Error('Invalid price history data');
+    }
+    
+    const history = response.prices.map(([timestamp, price]) => ({
+      timestamp,
+      price
+    }));
+    
+    // Cache the result
+    priceHistoryCache[coinId] = history;
+    
+    return history;
+  } catch (error) {
+    console.error(`Error fetching price history for ${coinId}:`, error);
+    
+    // Return cached data if available, even if it's stale
+    if (priceHistoryCache[coinId]) {
+      console.warn('Using cached price history due to API error');
+      return priceHistoryCache[coinId];
+    }
+    
+    throw new Error(
+      error instanceof Error
+        ? error.message
+        : `Failed to load price history for ${coinId}. Please try again.`
+    );
+  }
 };
 
 const calculateSMA = (prices: number[], period: number): number => {
@@ -122,78 +181,132 @@ const analyzeSignal = (
 };
 
 const RealTimeAnalysis = () => {
-  const [analysisResults, setAnalysisResults] = useState<AnalysisResult[]>([]);
+  const [selectedCrypto, setSelectedCrypto] = useState<string>('bitcoin');
+  const [analysis, setAnalysis] = useState<AnalysisResult[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [lastUpdate, setLastUpdate] = useState<string>('');
 
-  const { data: cryptos, isLoading } = useQuery({
+  const { 
+    data: cryptos, 
+    error: cryptosError, 
+    isLoading: isLoadingCryptos,
+    refetch: refetchCryptos 
+  } = useQuery<CryptoData[]>({
     queryKey: ['topCryptos'],
     queryFn: fetchTopCryptos,
-    refetchInterval: 60000, // Refetch every minute
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: true,
+    refetchInterval: 5 * 60 * 1000, // 5 minutes
+    staleTime: 5 * 60 * 1000, // 5 minutes
+    retry: 2,
+    retryDelay: (attempt) => Math.min(attempt * 1000, 3000),
   });
+
+  useEffect(() => {
+    if (cryptosError) {
+      setError('Failed to load cryptocurrency data. Please try again.');
+      setIsLoading(false);
+      setIsRefreshing(false);
+    } else if (cryptos) {
+      setError(null);
+      setIsLoading(false);
+      setIsRefreshing(false);
+      setLastUpdated(new Date());
+    }
+  }, [cryptos, cryptosError]);
+
+  const handleRefresh = async () => {
+    if (isRefreshing) return;
+    
+    try {
+      setIsRefreshing(true);
+      setError(null);
+      
+      // Clear caches
+      Object.keys(priceHistoryCache).forEach(key => {
+        delete priceHistoryCache[key];
+      });
+      
+      // Refetch data and re-run analysis
+      await refetchCryptos();
+      if (cryptos) {
+        await performAnalysis();
+      }
+      
+      setLastUpdated(new Date());
+    } catch (error) {
+      console.error('Error refreshing data:', error);
+      setError('Failed to refresh data. Please try again.');
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   const performAnalysis = async () => {
     if (!cryptos || isAnalyzing) return;
 
     setIsAnalyzing(true);
-    const results: AnalysisResult[] = [];
-
-    for (const crypto of cryptos.slice(0, 5)) { // Analyze top 5 to avoid rate limits
-      try {
-        console.log(`Analyzing ${crypto.name}...`);
-        
-        // Fetch price history
-        const priceHistory = await fetchPriceHistory(crypto.id);
-        const prices = priceHistory.map(p => p.price);
-
-        if (prices.length < 20) {
-          console.warn(`Insufficient data for ${crypto.name}`);
-          continue;
+    setError(null);
+    
+    try {
+      const results: AnalysisResult[] = [];
+      
+      for (const crypto of cryptos) {
+        try {
+          const priceHistory = await fetchPriceHistory(crypto.id);
+          const prices = priceHistory.map(item => item.price);
+          
+          if (prices.length < 50) {
+            console.warn(`Insufficient price history for ${crypto.name}`);
+            continue;
+          }
+          
+          const sma20 = calculateSMA(prices, 20);
+          const sma50 = calculateSMA(prices, 50);
+          const rsi = calculateRSI(prices);
+          
+          const { signal, reason, trend } = analyzeSignal(
+            crypto.current_price,
+            sma20,
+            sma50,
+            rsi,
+            crypto.price_change_percentage_24h || 0
+          );
+          
+          results.push({
+            coin: crypto.id,
+            name: crypto.name,
+            price: crypto.current_price,
+            priceChange24h: crypto.price_change_percentage_24h || 0,
+            signal,
+            signalReason: reason,
+            sma20,
+            sma50,
+            rsi,
+            trend: trend as 'strong_up' | 'up' | 'neutral' | 'down' | 'strong_down',
+            volume: crypto.total_volume,
+            marketCap: crypto.market_cap,
+            timestamp: new Date().toISOString()
+          });
+        } catch (err) {
+          console.error(`Error analyzing ${crypto.name}:`, err);
         }
-
-        // Calculate technical indicators
-        const sma20 = calculateSMA(prices, 20);
-        const sma50 = calculateSMA(prices, 50);
-        const rsi = calculateRSI(prices);
-
-        // Analyze signal
-        const analysis = analyzeSignal(
-          crypto.current_price,
-          sma20,
-          sma50,
-          rsi,
-          crypto.price_change_percentage_24h
-        );
-
-        const result: AnalysisResult = {
-          coin: crypto.id.toUpperCase(),
-          name: crypto.name,
-          price: crypto.current_price,
-          priceChange24h: crypto.price_change_percentage_24h,
-          signal: analysis.signal,
-          signalReason: analysis.reason,
-          sma20,
-          sma50,
-          rsi,
-          trend: analysis.trend as any,
-          volume: crypto.total_volume,
-          marketCap: crypto.market_cap,
-          timestamp: new Date().toISOString()
-        };
-
-        results.push(result);
-        
-        // Add delay to respect rate limits
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        
-      } catch (error) {
-        console.error(`Error analyzing ${crypto.name}:`, error);
       }
-    }
 
-    setAnalysisResults(results);
-    setLastUpdate(new Date().toLocaleTimeString());
-    setIsAnalyzing(false);
+      setAnalysis(results);
+      setLastUpdated(new Date());
+      setIsAnalyzing(false);
+      
+      return results;
+    } catch (error) {
+      console.error('Error in analysis:', error);
+      setError('Failed to analyze cryptocurrency data. Please try again.');
+      setIsAnalyzing(false);
+      return [];
+    }
   };
 
   useEffect(() => {
@@ -238,25 +351,48 @@ const RealTimeAnalysis = () => {
     }
   };
 
-  const longSignals = analysisResults.filter(r => r.signal === 'long');
-  const shortSignals = analysisResults.filter(r => r.signal === 'short');
-  const holdSignals = analysisResults.filter(r => r.signal === 'hold');
+  const longSignals = analysis.filter(r => r?.signal === 'long');
+  const shortSignals = analysis.filter(r => r?.signal === 'short');
+  const holdSignals = analysis.filter(r => r?.signal === 'hold');
 
-  if (isLoading) {
+  if (isLoadingCryptos || isLoading) {
     return (
-      <Card className="glass-card animate-fade-in">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <TrendingUpIcon className="w-5 h-5" />
-            Real-Time Analysis
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="text-center py-8">
-            <div className="animate-pulse text-muted-foreground">Loading market data...</div>
+      <div className="flex flex-col items-center justify-center h-64 space-y-4">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+        <p className="text-gray-500">Loading market data...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="bg-red-50 border-l-4 border-red-400 p-4 mb-4 rounded">
+        <div className="flex items-start">
+          <div className="flex-shrink-0 pt-0.5">
+            <XCircle className="h-5 w-5 text-red-400" aria-hidden="true" />
           </div>
-        </CardContent>
-      </Card>
+          <div className="ml-3 flex-1">
+            <p className="text-sm text-red-700">{error}</p>
+            <div className="mt-3">
+              <button
+                type="button"
+                onClick={handleRefresh}
+                disabled={isRefreshing}
+                className={`inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded shadow-sm text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 ${isRefreshing ? 'opacity-75 cursor-not-allowed' : ''}`}
+              >
+                {isRefreshing ? (
+                  <>
+                    <RefreshCw className="animate-spin -ml-1 mr-2 h-3 w-3" />
+                    Refreshing...
+                  </>
+                ) : (
+                  'Try Again'
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
     );
   }
 
@@ -271,7 +407,7 @@ const RealTimeAnalysis = () => {
               Real-Time Crypto Analysis
             </div>
             <div className="text-sm text-muted-foreground">
-              Last Update: {lastUpdate}
+              Last Update: {lastUpdated ? lastUpdated.toLocaleTimeString() : 'Never'}
             </div>
           </CardTitle>
         </CardHeader>
@@ -299,7 +435,7 @@ const RealTimeAnalysis = () => {
       </Card>
 
       {/* Analysis Results */}
-      {analysisResults.length > 0 && (
+      {analysis.length > 0 && (
         <Card className="glass-card">
           <CardHeader>
             <CardTitle>Analysis Results</CardTitle>
@@ -320,7 +456,7 @@ const RealTimeAnalysis = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {analysisResults.map((result, index) => (
+                  {analysis.map((result, index) => (
                     <tr key={result.coin} className="border-b border-secondary/50">
                       <td className="py-3">
                         <div className="font-medium">{result.name}</div>
