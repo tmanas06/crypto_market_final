@@ -1,1 +1,1 @@
-# Welcome to your Lovable Project!
+# # Cryptic market project for basic analysis
