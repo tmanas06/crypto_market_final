@@ -1,5 +1,32 @@
 
 import { useState, useEffect } from 'react';
+import { createConfig, configureChains, useAccount, useConnect, useDisconnect } from 'wagmi';
+import { publicProvider } from 'wagmi/providers/public';
+import { InjectedConnector } from 'wagmi/connectors/injected';
+import { WalletConnectConnector } from 'wagmi/connectors/walletConnect';
+import { mainnet, polygon, optimism, arbitrum } from 'wagmi/chains';
+
+export const { chains, publicClient, webSocketPublicClient } = configureChains(
+  [mainnet, polygon, optimism, arbitrum],
+  [publicProvider()]
+);
+
+// Create a custom config with the required connectors
+export const config = createConfig({
+  autoConnect: true,
+  connectors: [
+    new InjectedConnector({ chains }),
+    new WalletConnectConnector({
+      chains,
+      options: {
+        projectId: 'YOUR_WALLETCONNECT_PROJECT_ID', // Get this from WalletConnect Cloud
+        showQrModal: true,
+      },
+    }),
+  ],
+  publicClient,
+  webSocketPublicClient,
+});
 
 export interface WalletAsset {
   symbol: string;
@@ -11,32 +38,24 @@ export interface WalletAsset {
 }
 
 export const useWallet = () => {
-  const [isConnected, setIsConnected] = useState(false);
-  const [address, setAddress] = useState<string | null>(null);
+  const { address, isConnected } = useAccount();
+  const { connect, connectors, isLoading: isConnecting } = useConnect();
+  const { disconnect } = useDisconnect();
   const [assets, setAssets] = useState<WalletAsset[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
   const connectWallet = async () => {
     try {
-      setIsLoading(true);
-      // Check if MetaMask is installed
-      if (typeof window.ethereum !== 'undefined') {
-        const accounts = await window.ethereum.request({
-          method: 'eth_request_accounts'
-        });
-        
-        if (accounts.length > 0) {
-          setAddress(accounts[0]);
-          setIsConnected(true);
-          await fetchWalletAssets(accounts[0]);
-        }
-      } else {
-        alert('Please install MetaMask to connect your wallet');
+      // Try to connect with the injected connector (MetaMask, etc.) first
+      const injected = connectors.find((c) => c.id === 'injected');
+      if (injected) {
+        await connect({ connector: injected });
+      } else if (connectors[0]) {
+        // Fallback to the first available connector
+        await connect({ connector: connectors[0] });
       }
     } catch (error) {
       console.error('Error connecting wallet:', error);
-    } finally {
-      setIsLoading(false);
     }
   };
 
@@ -78,16 +97,19 @@ export const useWallet = () => {
   };
 
   const disconnectWallet = () => {
-    setIsConnected(false);
-    setAddress(null);
-    setAssets([]);
+    try {
+      disconnect();
+      setAssets([]);
+    } catch (error) {
+      console.error('Error disconnecting wallet:', error);
+    }
   };
 
   return {
     isConnected,
     address,
     assets,
-    isLoading,
+    isLoading: isLoading || isConnecting,
     connectWallet,
     disconnectWallet
   };
