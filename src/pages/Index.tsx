@@ -1,7 +1,9 @@
+
 import MarketStats from "@/components/MarketStats";
 import CryptoChart from "@/components/CryptoChart";
 import PortfolioCard from "@/components/PortfolioCard";
 import CryptoList from "@/components/CryptoList";
+import RealTimeAnalysis from "@/components/RealTimeAnalysis";
 
 const Index = () => {
   return (
@@ -14,13 +16,17 @@ const Index = () => {
         
         <MarketStats />
         
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8">
           <div className="lg:col-span-2">
             <CryptoChart />
           </div>
           <div>
             <PortfolioCard />
           </div>
+        </div>
+        
+        <div className="mb-8">
+          <RealTimeAnalysis />
         </div>
         
         <CryptoList />
