@@ -9,13 +9,29 @@ export default defineConfig(({ mode }) => ({
     host: "::",
     port: 8080,
   },
+  esbuild: {
+    jsx: 'automatic',
+  },
   plugins: [
-    react(),
+    react({
+      jsxImportSource: '@emotion/react',
+      plugins: [
+        ['@swc/plugin-styled-components', {}],
+      ],
+    }),
     mode === 'development' && componentTagger(),
   ].filter(Boolean),
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+    },
+  },
+  optimizeDeps: {
+    esbuildOptions: {
+      // Node.js global to browser globalThis
+      define: {
+        global: 'globalThis',
+      },
     },
   },
 }));

@@ -2,12 +2,20 @@
 import { Link, useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import WalletConnect from '@/components/WalletConnect';
-import { Home, TrendingUp } from 'lucide-react';
+import { Home, TrendingUp, ArrowRightLeft, BarChart2, Link2 } from 'lucide-react';
 
 const Navbar = () => {
   const location = useLocation();
 
-  const isActive = (path: string) => location.pathname === path;
+  const isActive = (path: string) => location.pathname.startsWith(path);
+
+  const navItems = [
+    { path: '/', icon: <Home className="h-4 w-4" />, label: 'Dashboard' },
+    { path: '/meme-coins', icon: <TrendingUp className="h-4 w-4" />, label: '🚀 Meme Coins' },
+    { path: '/swap', icon: <ArrowRightLeft className="h-4 w-4" />, label: 'Swap' },
+    { path: '/trade', icon: <BarChart2 className="h-4 w-4" />, label: 'Trade' },
+    { path: '/bridge', icon: <Link2 className="h-4 w-4" />, label: 'Bridge' },
+  ];
 
   return (
     <nav className="border-b bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/60 sticky top-0 z-50">
@@ -18,28 +26,19 @@ const Navbar = () => {
               Crypto Dashboard
             </Link>
             
-            <div className="flex items-center space-x-4">
-              <Link to="/">
-                <Button 
-                  variant={isActive('/') ? 'default' : 'ghost'} 
-                  size="sm"
-                  className="flex items-center gap-2"
-                >
-                  <Home className="h-4 w-4" />
-                  Dashboard
-                </Button>
-              </Link>
-              
-              <Link to="/meme-coins">
-                <Button 
-                  variant={isActive('/meme-coins') ? 'default' : 'ghost'} 
-                  size="sm"
-                  className="flex items-center gap-2"
-                >
-                  <TrendingUp className="h-4 w-4" />
-                  🚀 Meme Coins
-                </Button>
-              </Link>
+            <div className="flex items-center space-x-1">
+              {navItems.map((item) => (
+                <Link to={item.path} key={item.path}>
+                  <Button 
+                    variant={isActive(item.path) ? 'default' : 'ghost'} 
+                    size="sm"
+                    className="flex items-center gap-2"
+                  >
+                    {item.icon}
+                    {item.label}
+                  </Button>
+                </Link>
+              ))}
             </div>
           </div>
           

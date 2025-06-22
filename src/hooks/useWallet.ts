@@ -1,15 +1,9 @@
-
-import { useState, useEffect } from 'react';
-import { createConfig, configureChains, useAccount, useConnect, useDisconnect } from 'wagmi';
-import { publicProvider } from 'wagmi/providers/public';
-import { InjectedConnector } from 'wagmi/connectors/injected';
-import { WalletConnectConnector } from 'wagmi/connectors/walletConnect';
+import React, { useState, useEffect, ReactNode } from 'react';
+import { createConfig, http, useAccount, useConnect, useDisconnect } from 'wagmi';
+import { WagmiConfig } from '@wagmi/core';
 import { mainnet, polygon, optimism, arbitrum } from 'wagmi/chains';
-
-export const { chains, publicClient, webSocketPublicClient } = configureChains(
-  [mainnet, polygon, optimism, arbitrum],
-  [publicProvider()]
-);
+import { getDefaultConfig } from '@rainbow-me/rainbowkit';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 // Get WalletConnect project ID from environment variables
 const walletConnectProjectId = import.meta.env.VITE_WALLETCONNECT_PROJECT_ID;
@@ -18,39 +12,42 @@ if (!walletConnectProjectId) {
   console.warn('WalletConnect project ID is not set. WalletConnect will not work properly.');
 }
 
+// Configure chains
+const chains = [mainnet, polygon, optimism, arbitrum] as const;
+
+// Create a client for React Query
+const queryClient = new QueryClient();
+
 // Create a custom config with the required connectors
-export const config = createConfig({
-  autoConnect: true,
-  connectors: [
-    new InjectedConnector({ 
-      chains,
-      options: {
-        name: 'Browser Wallet',
-        shimDisconnect: true,
-      },
-    }),
-    new WalletConnectConnector({
-      chains,
-      options: {
-        projectId: walletConnectProjectId || 'fallback-project-id',
-        showQrModal: true,
-        metadata: {
-          name: 'Crypto Markets',
-          description: 'Crypto market analysis and trading platform',
-          url: window.location.origin,
-          icons: ['https://your-app-url.com/logo.png']
-        },
-        qrModalOptions: {
-          themeVariables: {
-            '--wcm-z-index': '9999'
-          }
-        }
-      },
-    }),
-  ],
-  publicClient,
-  webSocketPublicClient,
-});
+const config = createConfig(
+  getDefaultConfig({
+    appName: 'Crypto Markets',
+    projectId: walletConnectProjectId || 'fallback-project-id',
+    chains: chains as any,
+    transports: {
+      [mainnet.id]: http(),
+      [polygon.id]: http(),
+      [optimism.id]: http(),
+      [arbitrum.id]: http(),
+    },
+    ssr: true,
+  }) as any
+);
+
+// Create a provider component
+type Web3ProviderProps = {
+  children: ReactNode;
+};
+
+export const Web3Provider: React.FC<{ children: ReactNode }> = ({ children }) => {
+  return (
+    <WagmiConfig config={config}>
+      <QueryClientProvider client={queryClient}>
+        {children}
+      </QueryClientProvider>
+    </WagmiConfig>
+  );
+};
 
 export interface WalletAsset {
   symbol: string;
@@ -61,62 +58,72 @@ export interface WalletAsset {
   change24h: number;
 }
 
+// Wallet connection hook
 export const useWallet = () => {
   const { address, isConnected } = useAccount();
-  const { connect, connectors, isLoading: isConnecting } = useConnect();
+  const { connect, connectors, isPending: isConnecting } = useConnect();
   const { disconnect } = useDisconnect();
   const [assets, setAssets] = useState<WalletAsset[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [balance, setBalance] = useState<number>(0);
 
-  const connectWallet = async () => {
+  // Mock function to get wallet balance
+  const fetchBalance = async (): Promise<number> => {
+    if (!address) return 0;
+    // In a real app, you would fetch this from your blockchain provider
+    return Math.random() * 10;
+  };
+
+  // Mock function to get wallet assets
+  const fetchAssets = async (): Promise<WalletAsset[]> => {
+    if (!address) return [];
+    
+    // In a real app, you would fetch this from your blockchain provider
+    return [
+      {
+        symbol: 'ETH',
+        name: 'Ethereum',
+        balance: 2.5,
+        value: 6250.75,
+        price: 2500.30,
+        change24h: -0.42
+      },
+      {
+        symbol: 'BTC',
+        name: 'Bitcoin',
+        balance: 0.1,
+        value: 10473.80,
+        price: 104738.00,
+        change24h: -0.41
+      },
+      {
+        symbol: 'USDC',
+        name: 'USD Coin',
+        balance: 1000,
+        value: 1000,
+        price: 1,
+        change24h: 0
+      }
+    ];
+  };
+
+  const connectWallet = async (connector?: any) => {
     try {
-      // Try to connect with the injected connector (MetaMask, etc.) first
-      const injected = connectors.find((c) => c.id === 'injected');
-      if (injected) {
-        await connect({ connector: injected });
-      } else if (connectors[0]) {
-        // Fallback to the first available connector
-        await connect({ connector: connectors[0] });
+      if (connector) {
+        await connect({ connector });
+      } else {
+        // Try to connect with the injected connector (MetaMask, etc.) first
+        const injected = connectors.find((c: any) => c.id === 'injected');
+        if (injected) {
+          await connect({ connector: injected });
+        } else if (connectors[0]) {
+          // Fallback to the first available connector
+          await connect({ connector: connectors[0] });
+        }
       }
     } catch (error) {
       console.error('Error connecting wallet:', error);
-    }
-  };
-
-  const fetchWalletAssets = async (walletAddress: string) => {
-    try {
-      // Mock wallet assets for demo purposes
-      // In a real app, you'd fetch from blockchain APIs or wallet APIs
-      const mockAssets: WalletAsset[] = [
-        {
-          symbol: 'ETH',
-          name: 'Ethereum',
-          balance: 2.5,
-          value: 6250.75,
-          price: 2500.30,
-          change24h: -0.42
-        },
-        {
-          symbol: 'BTC',
-          name: 'Bitcoin',
-          balance: 0.1,
-          value: 10473.80,
-          price: 104738.00,
-          change24h: -0.41
-        },
-        {
-          symbol: 'DOGE',
-          name: 'Dogecoin',
-          balance: 1000,
-          value: 170.21,
-          price: 0.17021,
-          change24h: -0.21
-        }
-      ];
-      
-      setAssets(mockAssets);
-    } catch (error) {
-      console.error('Error fetching wallet assets:', error);
+      throw error;
     }
   };
 
@@ -124,17 +131,46 @@ export const useWallet = () => {
     try {
       disconnect();
       setAssets([]);
+      setBalance(0);
     } catch (error) {
       console.error('Error disconnecting wallet:', error);
     }
   };
 
+  // Fetch wallet data when connected
+  useEffect(() => {
+    const fetchWalletData = async () => {
+      if (isConnected && address) {
+        setIsLoading(true);
+        try {
+          const [balanceData, assetsData] = await Promise.all([
+            fetchBalance(),
+            fetchAssets()
+          ]);
+          setBalance(balanceData);
+          setAssets(assetsData);
+        } catch (error) {
+          console.error('Error fetching wallet data:', error);
+        } finally {
+          setIsLoading(false);
+        }
+      } else {
+        setAssets([]);
+        setBalance(0);
+      }
+    };
+
+    fetchWalletData();
+  }, [isConnected, address]);
+
   return {
-    isConnected,
     address,
+    isConnected,
+    balance,
     assets,
-    isLoading: isLoading || isConnecting,
-    connectWallet,
-    disconnectWallet
+    connect: connectWallet,
+    disconnect: disconnectWallet,
+    connectors,
+    isLoading: isConnecting || isLoading,
   };
 };
