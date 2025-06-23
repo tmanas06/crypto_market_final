@@ -1,9 +1,9 @@
 import React, { useState, useEffect, ReactNode } from 'react';
-import { createConfig, http, useAccount, useConnect, useDisconnect } from 'wagmi';
-import { WagmiConfig } from '@wagmi/core';
+import { createConfig, http, useAccount, useConnect, useDisconnect, WagmiProvider } from 'wagmi';
 import { mainnet, polygon, optimism, arbitrum } from 'wagmi/chains';
-import { getDefaultConfig } from '@rainbow-me/rainbowkit';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { getDefaultConfig } from '@rainbow-me/rainbowkit';
+import { walletConnect } from 'wagmi/connectors';
 
 // Get WalletConnect project ID from environment variables
 const walletConnectProjectId = import.meta.env.VITE_WALLETCONNECT_PROJECT_ID;
@@ -13,26 +13,28 @@ if (!walletConnectProjectId) {
 }
 
 // Configure chains
-const chains = [mainnet, polygon, optimism, arbitrum] as const;
+export const chains = [mainnet, polygon, optimism, arbitrum] as const;
 
 // Create a client for React Query
 const queryClient = new QueryClient();
 
-// Create a custom config with the required connectors
-const config = createConfig(
-  getDefaultConfig({
-    appName: 'Crypto Markets',
-    projectId: walletConnectProjectId || 'fallback-project-id',
-    chains: chains as any,
-    transports: {
-      [mainnet.id]: http(),
-      [polygon.id]: http(),
-      [optimism.id]: http(),
-      [arbitrum.id]: http(),
-    },
-    ssr: true,
-  }) as any
-);
+// Create wagmi config
+export const config = createConfig({
+  chains: [mainnet, polygon, optimism, arbitrum],
+  transports: {
+    [mainnet.id]: http(),
+    [polygon.id]: http(),
+    [optimism.id]: http(),
+    [arbitrum.id]: http(),
+  },
+  connectors: [
+    walletConnect({
+      projectId: walletConnectProjectId || 'fallback-project-id',
+      showQrModal: true,
+    })
+  ],
+  ssr: true,
+});
 
 // Create a provider component
 type Web3ProviderProps = {
@@ -41,11 +43,11 @@ type Web3ProviderProps = {
 
 export const Web3Provider: React.FC<{ children: ReactNode }> = ({ children }) => {
   return (
-    <WagmiConfig config={config}>
+    <WagmiProvider config={config}>
       <QueryClientProvider client={queryClient}>
         {children}
       </QueryClientProvider>
-    </WagmiConfig>
+    </WagmiProvider>
   );
 };
 
